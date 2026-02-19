@@ -40,6 +40,7 @@ do
     local eleriumLibrary = Library
     local compat = {}
     local liveWindows = {}
+    local UserInputService = game:GetService("UserInputService")
 
     local function trimText(value)
         local s = tostring(value or "")
@@ -196,6 +197,142 @@ do
         return section
     end
 
+    local function isPointInFrame(point, frame)
+        if not frame then
+            return false
+        end
+        local p = frame.AbsolutePosition
+        local s = frame.AbsoluteSize
+        return point.X >= p.X and point.X <= (p.X + s.X) and point.Y >= p.Y and point.Y <= (p.Y + s.Y)
+    end
+
+    local function applyLeftTabLayout(windowFrame)
+        if not windowFrame or not windowFrame.Parent then
+            return
+        end
+
+        local tabSelection = windowFrame:FindFirstChild("TabSelection")
+        local tabs = windowFrame:FindFirstChild("Tabs")
+        if not tabSelection or not tabs then
+            return
+        end
+
+        pcall(function()
+            tabSelection.Position = UDim2.new(0, 15, 0, 30)
+            tabSelection.Size = UDim2.new(0, 170, 1, -45)
+        end)
+
+        local tabButtons = tabSelection:FindFirstChild("TabButtons")
+        if tabButtons then
+            pcall(function()
+                tabButtons.Position = UDim2.new(0, 4, 0, 4)
+                tabButtons.Size = UDim2.new(1, -8, 1, -8)
+            end)
+
+            local list = tabButtons:FindFirstChildOfClass("UIListLayout")
+            if list then
+                pcall(function()
+                    list.FillDirection = Enum.FillDirection.Vertical
+                    list.Padding = UDim.new(0, 4)
+                end)
+            end
+        end
+
+        local splitLine = tabSelection:FindFirstChild("Frame")
+        if splitLine then
+            pcall(function()
+                splitLine.Position = UDim2.new(1, 0, 0, 0)
+                splitLine.Size = UDim2.new(0, 2, 1, 0)
+            end)
+        end
+
+        pcall(function()
+            tabs.Position = UDim2.new(0, 195, 0, 30)
+            tabs.Size = UDim2.new(1, -210, 1, -40)
+            tabs.ClipsDescendants = true
+        end)
+    end
+
+    local function attachTabScroll(windowFrame, tabFrame)
+        if not windowFrame or not tabFrame or not tabFrame.Parent then
+            return
+        end
+
+        local tabsHost = windowFrame:FindFirstChild("Tabs")
+        local layout = tabFrame:FindFirstChildOfClass("UIListLayout")
+        if not tabsHost or not layout then
+            return
+        end
+
+        local scrollY = 0
+
+        local function maxScroll()
+            local contentHeight = layout.AbsoluteContentSize.Y
+            local viewHeight = tabsHost.AbsoluteSize.Y
+            return math.max(0, contentHeight - viewHeight + 8)
+        end
+
+        local function applyScroll()
+            if not tabFrame or not tabFrame.Parent then
+                return
+            end
+            local limit = maxScroll()
+            scrollY = math.clamp(scrollY, 0, limit)
+            tabFrame.Position = UDim2.new(0, 0, 0, -math.floor(scrollY + 0.5))
+        end
+
+        pcall(function()
+            layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+                task.defer(applyScroll)
+            end)
+        end)
+        pcall(function()
+            tabsHost:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+                task.defer(applyScroll)
+            end)
+        end)
+
+        UserInputService.InputChanged:Connect(function(input, gameProcessed)
+            if gameProcessed or not tabFrame.Visible then
+                return
+            end
+            if input.UserInputType ~= Enum.UserInputType.MouseWheel then
+                return
+            end
+            if not isPointInFrame(UserInputService:GetMouseLocation(), tabsHost) then
+                return
+            end
+
+            scrollY = scrollY - (input.Position.Z * 34)
+            applyScroll()
+        end)
+
+        UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if gameProcessed or UserInputService:GetFocusedTextBox() or not tabFrame.Visible then
+                return
+            end
+            if not isPointInFrame(UserInputService:GetMouseLocation(), tabsHost) then
+                return
+            end
+
+            if input.KeyCode == Enum.KeyCode.Up then
+                scrollY = scrollY - 36
+                applyScroll()
+            elseif input.KeyCode == Enum.KeyCode.Down then
+                scrollY = scrollY + 36
+                applyScroll()
+            elseif input.KeyCode == Enum.KeyCode.PageUp then
+                scrollY = scrollY - 140
+                applyScroll()
+            elseif input.KeyCode == Enum.KeyCode.PageDown then
+                scrollY = scrollY + 140
+                applyScroll()
+            end
+        end)
+
+        applyScroll()
+    end
+
     function compat.CreateLib(title, theme)
         local options = {
             main_color = (theme and theme.SchemeColor) or Color3.fromRGB(41, 74, 122),
@@ -211,13 +348,19 @@ do
             firstTabShown = false,
         }
         table.insert(liveWindows, state)
+        applyLeftTabLayout(windowObject)
 
         local window = {}
         function window:NewTab(tabName)
             local tabData = nil
+            local tabObject = nil
             pcall(function()
-                tabData = windowData:AddTab(tostring(tabName or "Tab"))
+                tabData, tabObject = windowData:AddTab(tostring(tabName or "Tab"))
             end)
+            applyLeftTabLayout(state.object)
+            if tabObject then
+                attachTabScroll(state.object, tabObject)
+            end
 
             if tabData and tabData.Show and not state.firstTabShown then
                 pcall(function()
@@ -644,29 +787,6 @@ local TOKEN_PATTERNS = {
     Bomb = { "bomb" },
     Bubble = { "bubble" },
     Flame = { "flame" },
-}
-
-local TOKEN_GUIDE_LIST = {
-    { icon = "[H]", name = "Honey Token" },
-    { icon = "[P]", name = "Pollen Token" },
-    { icon = "[+]", name = "Focus Token" },
-    { icon = "[>]", name = "Haste Token" },
-    { icon = "[M]", name = "Melody Token" },
-    { icon = "[A]", name = "Ability Token" },
-    { icon = "[!]", name = "Rage Token" },
-    { icon = "[!]", name = "Stinger Token" },
-    { icon = "[$]", name = "Ticket Token" },
-    { icon = "[T]", name = "Treat Token" },
-    { icon = "[X]", name = "Mark Token" },
-    { icon = "[X]", name = "Target Token" },
-    { icon = "[*]", name = "Pop Star Token" },
-    { icon = "[*]", name = "Guiding Star Token" },
-    { icon = "[*]", name = "Star Saw Token" },
-    { icon = "[L]", name = "Link Token" },
-    { icon = "[B]", name = "Bomb Token" },
-    { icon = "[U]", name = "Bubble Token" },
-    { icon = "[F]", name = "Flame Token" },
-    { icon = "[Q]", name = "Precise Token" },
 }
 
 local EFFECT_CLASSES = {
@@ -4322,65 +4442,6 @@ end)
 
 end
 
-local okTokenGuideUi, tokenGuideUiErr = pcall(function()
-    local TokenGuideTab = Window:NewTab("Token Guide")
-    local TokenGuideKnown = TokenGuideTab:NewSection("Known Tokens (Support)")
-    local TokenGuideLive = TokenGuideTab:NewSection("Detected Tokens (This Server)")
-
-    for _, entry in ipairs(TOKEN_GUIDE_LIST) do
-        local supported = isTokenSupportedByMacroName(entry.name)
-        local stateText = supported and "can collect" or "not supported"
-        TokenGuideKnown:NewLabel(entry.icon .. " " .. entry.name .. " | " .. stateText)
-    end
-
-    local tokenGuideStatus = TokenGuideLive:NewLabel("Detected: not scanned")
-    local tokenGuideRows = {}
-    for _ = 1, 18 do
-        table.insert(tokenGuideRows, TokenGuideLive:NewLabel("-"))
-    end
-
-    local function refreshTokenGuideRows()
-        local names = collectTokenNames()
-        if tokenGuideStatus and tokenGuideStatus.UpdateLabel then
-            tokenGuideStatus:UpdateLabel("Detected: " .. tostring(#names) .. " names")
-        end
-
-        for i, row in ipairs(tokenGuideRows) do
-            local line = " "
-            local tokenName = names[i]
-            if tokenName then
-                local supported = isTokenSupportedByMacroName(tokenName)
-                local collectNow = isTokenAllowed(tokenName)
-                local mode = supported and (collectNow and "collect now" or "filtered now") or "not supported"
-                line = (supported and "[+]" or "[-]") .. " " .. tokenName .. " | " .. mode
-            end
-            if row and row.UpdateLabel then
-                row:UpdateLabel(line)
-            end
-        end
-    end
-
-    TokenGuideLive:NewButton("Refresh Detected Tokens", "Scan token names in current server", function()
-        refreshTokenGuideRows()
-    end)
-
-    TokenGuideLive:NewButton("Copy Detected Names", "Copy full token list to clipboard", function()
-        scanTokenNames()
-        refreshTokenGuideRows()
-    end)
-
-    TokenGuideLive:NewButton("Collect All: ON", "Quick enable full token collection", function()
-        Settings.CollectAllTokens = true
-    end)
-
-    TokenGuideLive:NewButton("Collect All: OFF", "Use internal filters only", function()
-        Settings.CollectAllTokens = false
-    end)
-end)
-if not okTokenGuideUi then
-    warn("[ICHIGER] Token Guide UI failed: " .. tostring(tokenGuideUiErr))
-end
-
 do
 local ToysTab = Window:NewTab("Toys")
 local ToyControl = ToysTab:NewSection("Toys")
@@ -5117,4 +5178,3 @@ task.spawn(function()
         runAntiLagLoop(setDebugStatus)
     end
 end)
-
