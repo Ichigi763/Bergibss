@@ -40,7 +40,6 @@ do
     local eleriumLibrary = Library
     local compat = {}
     local liveWindows = {}
-    local UserInputService = game:GetService("UserInputService")
 
     local function trimText(value)
         local s = tostring(value or "")
@@ -197,142 +196,6 @@ do
         return section
     end
 
-    local function isPointInFrame(point, frame)
-        if not frame then
-            return false
-        end
-        local p = frame.AbsolutePosition
-        local s = frame.AbsoluteSize
-        return point.X >= p.X and point.X <= (p.X + s.X) and point.Y >= p.Y and point.Y <= (p.Y + s.Y)
-    end
-
-    local function applyLeftTabLayout(windowFrame)
-        if not windowFrame or not windowFrame.Parent then
-            return
-        end
-
-        local tabSelection = windowFrame:FindFirstChild("TabSelection")
-        local tabs = windowFrame:FindFirstChild("Tabs")
-        if not tabSelection or not tabs then
-            return
-        end
-
-        pcall(function()
-            tabSelection.Position = UDim2.new(0, 15, 0, 30)
-            tabSelection.Size = UDim2.new(0, 170, 1, -45)
-        end)
-
-        local tabButtons = tabSelection:FindFirstChild("TabButtons")
-        if tabButtons then
-            pcall(function()
-                tabButtons.Position = UDim2.new(0, 4, 0, 4)
-                tabButtons.Size = UDim2.new(1, -8, 1, -8)
-            end)
-
-            local list = tabButtons:FindFirstChildOfClass("UIListLayout")
-            if list then
-                pcall(function()
-                    list.FillDirection = Enum.FillDirection.Vertical
-                    list.Padding = UDim.new(0, 4)
-                end)
-            end
-        end
-
-        local splitLine = tabSelection:FindFirstChild("Frame")
-        if splitLine then
-            pcall(function()
-                splitLine.Position = UDim2.new(1, 0, 0, 0)
-                splitLine.Size = UDim2.new(0, 2, 1, 0)
-            end)
-        end
-
-        pcall(function()
-            tabs.Position = UDim2.new(0, 195, 0, 30)
-            tabs.Size = UDim2.new(1, -210, 1, -40)
-            tabs.ClipsDescendants = true
-        end)
-    end
-
-    local function attachTabScroll(windowFrame, tabFrame)
-        if not windowFrame or not tabFrame or not tabFrame.Parent then
-            return
-        end
-
-        local tabsHost = windowFrame:FindFirstChild("Tabs")
-        local layout = tabFrame:FindFirstChildOfClass("UIListLayout")
-        if not tabsHost or not layout then
-            return
-        end
-
-        local scrollY = 0
-
-        local function maxScroll()
-            local contentHeight = layout.AbsoluteContentSize.Y
-            local viewHeight = tabsHost.AbsoluteSize.Y
-            return math.max(0, contentHeight - viewHeight + 8)
-        end
-
-        local function applyScroll()
-            if not tabFrame or not tabFrame.Parent then
-                return
-            end
-            local limit = maxScroll()
-            scrollY = math.clamp(scrollY, 0, limit)
-            tabFrame.Position = UDim2.new(0, 0, 0, -math.floor(scrollY + 0.5))
-        end
-
-        pcall(function()
-            layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-                task.defer(applyScroll)
-            end)
-        end)
-        pcall(function()
-            tabsHost:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-                task.defer(applyScroll)
-            end)
-        end)
-
-        UserInputService.InputChanged:Connect(function(input, gameProcessed)
-            if gameProcessed or not tabFrame.Visible then
-                return
-            end
-            if input.UserInputType ~= Enum.UserInputType.MouseWheel then
-                return
-            end
-            if not isPointInFrame(UserInputService:GetMouseLocation(), tabsHost) then
-                return
-            end
-
-            scrollY = scrollY - (input.Position.Z * 34)
-            applyScroll()
-        end)
-
-        UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if gameProcessed or UserInputService:GetFocusedTextBox() or not tabFrame.Visible then
-                return
-            end
-            if not isPointInFrame(UserInputService:GetMouseLocation(), tabsHost) then
-                return
-            end
-
-            if input.KeyCode == Enum.KeyCode.Up then
-                scrollY = scrollY - 36
-                applyScroll()
-            elseif input.KeyCode == Enum.KeyCode.Down then
-                scrollY = scrollY + 36
-                applyScroll()
-            elseif input.KeyCode == Enum.KeyCode.PageUp then
-                scrollY = scrollY - 140
-                applyScroll()
-            elseif input.KeyCode == Enum.KeyCode.PageDown then
-                scrollY = scrollY + 140
-                applyScroll()
-            end
-        end)
-
-        applyScroll()
-    end
-
     function compat.CreateLib(title, theme)
         local options = {
             main_color = (theme and theme.SchemeColor) or Color3.fromRGB(41, 74, 122),
@@ -346,21 +209,18 @@ do
             options = options,
             object = windowObject,
             firstTabShown = false,
+            atlasTabs = {},
         }
         table.insert(liveWindows, state)
-        applyLeftTabLayout(windowObject)
 
         local window = {}
-        function window:NewTab(tabName)
+        function window:NewTab(tabName, lucideIcon)
+            tabName = tostring(tabName or "Tab")
+            table.insert(state.atlasTabs, { name = tabName, icon = lucideIcon })
             local tabData = nil
-            local tabObject = nil
             pcall(function()
-                tabData, tabObject = windowData:AddTab(tostring(tabName or "Tab"))
+                tabData = windowData:AddTab(tabName)
             end)
-            applyLeftTabLayout(state.object)
-            if tabObject then
-                attachTabScroll(state.object, tabObject)
-            end
 
             if tabData and tabData.Show and not state.firstTabShown then
                 pcall(function()
@@ -382,6 +242,7 @@ do
             return tab
         end
 
+        window.__atlasState = state
         return window
     end
 
@@ -405,6 +266,412 @@ do
 
     Library = compat
 end
+
+--// Atlas sidebar skin (Elerium-based)
+local function _atlas_hasFileApi()
+    return type(writefile) == "function" and (type(getcustomasset) == "function" or type(getsynasset) == "function" or (getgenv and type(getgenv().getcustomasset) == "function"))
+end
+
+local function _atlas_getAsset(path)
+    if type(getcustomasset) == "function" then
+        return getcustomasset(path)
+    end
+    if type(getsynasset) == "function" then
+        return getsynasset(path)
+    end
+    if getgenv and type(getgenv().getcustomasset) == "function" then
+        return getgenv().getcustomasset(path)
+    end
+    return nil
+end
+
+local function _atlas_mkdir(path)
+    if type(isfolder) == "function" and type(makefolder) == "function" then
+        if not isfolder(path) then
+            pcall(makefolder, path)
+        end
+    end
+end
+
+local function _atlas_isfile(path)
+    if type(isfile) == "function" then
+        return isfile(path)
+    end
+    return false
+end
+
+local function _atlas_lucidePng(iconName, sizePx, hexColor)
+    if not iconName or iconName == "" then
+        return nil
+    end
+    if not _atlas_hasFileApi() then
+        return nil
+    end
+
+    sizePx = tonumber(sizePx) or 18
+    local color = tostring(hexColor or "cfd3dc"):gsub("#", ""):lower()
+    if #color ~= 6 then
+        color = "cfd3dc"
+    end
+
+    _atlas_mkdir("Atlas")
+    _atlas_mkdir("Atlas/icons")
+
+    local fileName = string.format("Atlas/icons/lucide_%s_%d_%s.png", tostring(iconName):gsub("%W+", "_"), sizePx, color)
+    if not _atlas_isfile(fileName) then
+        local url = string.format("https://api.iconify.design/lucide:%s.png?width=%d&height=%d&color=%%23%s", tostring(iconName), sizePx, sizePx, color)
+        local ok, data = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if ok and type(data) == "string" and #data > 0 then
+            pcall(writefile, fileName, data)
+        end
+    end
+
+    local okAsset, asset = pcall(_atlas_getAsset, fileName)
+    if okAsset and asset then
+        return asset
+    end
+    return nil
+end
+
+local function _atlas_findPageContainer(root)
+    for _, inst in ipairs(root:GetDescendants()) do
+        if inst:IsA("UIPageLayout") then
+            return inst.Parent
+        end
+    end
+    return nil
+end
+
+local function _atlas_findTabButtonContainer(root, tabNames)
+    local wanted = {}
+    for _, name in ipairs(tabNames) do
+        wanted[tostring(name):lower()] = true
+    end
+
+    local best, bestScore = nil, -1
+    for _, inst in ipairs(root:GetDescendants()) do
+        if inst:IsA("Frame") or inst:IsA("ScrollingFrame") then
+            local score = 0
+            for _, child in ipairs(inst:GetChildren()) do
+                if child:IsA("TextButton") and type(child.Text) == "string" then
+                    local t = child.Text:lower()
+                    if wanted[t] then
+                        score = score + 3
+                    elseif #t > 0 and #t <= 24 then
+                        score = score + 1
+                    end
+                end
+            end
+            if score > bestScore then
+                best, bestScore = inst, score
+            end
+        end
+    end
+    return best
+end
+
+local function _atlas_styleTabButton(btn, iconAsset)
+    if not btn or not btn:IsA("TextButton") then
+        return
+    end
+
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.AutoButtonColor = true
+    btn.Font = Enum.Font.Gotham
+    \1    btn.TextColor3 = Color3.fromRGB(210, 210, 210)
+    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    btn.BackgroundTransparency = 0
+    btn.BorderSizePixel = 0
+    btn.Size = UDim2.new(1, -12, 0, 30)
+    btn.Position = UDim2.new(0, 6, btn.Position.Y.Scale, btn.Position.Y.Offset)
+
+    local padding = btn:FindFirstChild("AtlasPadding")
+    if not padding then
+        padding = Instance.new("UIPadding")
+        padding.Name = "AtlasPadding"
+        padding.Parent = btn
+        padding.PaddingLeft = UDim.new(0, 34)
+        padding.PaddingRight = UDim.new(0, 6)
+    end
+
+    local icon = btn:FindFirstChild("AtlasIcon")
+    if not icon then
+        icon = Instance.new("ImageLabel")
+        icon.Name = "AtlasIcon"
+        icon.BackgroundTransparency = 1
+        icon.Size = UDim2.new(0, 18, 0, 18)
+        icon.Position = UDim2.new(0, 10, 0.5, -9)
+        icon.Parent = btn
+    end
+    if iconAsset then
+        icon.Image = iconAsset
+        icon.ImageTransparency = 0
+    else
+        icon.Image = ""
+        icon.ImageTransparency = 1
+    end
+
+local function _atlas_setTabActive(btn, isActive)
+    if not btn or not btn:IsA("TextButton") then return end
+    local bar = btn:FindFirstChild("AtlasActiveBar")
+    local stroke = btn:FindFirstChild("AtlasStroke")
+    if not bar then
+        bar = Instance.new("Frame")
+        bar.Name = "AtlasActiveBar"
+        bar.BorderSizePixel = 0
+        bar.BackgroundColor3 = Color3.fromRGB(26, 98, 185)
+        bar.Size = UDim2.new(0, 3, 1, -10)
+        bar.Position = UDim2.new(0, 0, 0, 5)
+        bar.Parent = btn
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 2)
+        c.Parent = bar
+    end
+    if not stroke then
+        stroke = Instance.new("UIStroke")
+        stroke.Name = "AtlasStroke"
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Color = Color3.fromRGB(48, 48, 48)
+        stroke.Thickness = 1
+        stroke.Parent = btn
+    end
+
+    if isActive then
+        bar.Visible = true
+        btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        stroke.Color = Color3.fromRGB(70, 70, 70)
+    else
+        bar.Visible = false
+        btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+        btn.TextColor3 = Color3.fromRGB(210, 210, 210)
+        stroke.Color = Color3.fromRGB(48, 48, 48)
+    end
+end
+
+end
+
+local function applyAtlasLayout(window)
+    local state = window and window.__atlasState
+    if not state or not state.object or not state.atlasTabs then
+        return
+    end
+
+    task.wait(0.2)
+
+    local root = state.object
+    if typeof(root) ~= "Instance" then
+        return
+    end
+
+    local tabNames, iconByName, orderByName = {}, {}, {}
+
+    -- Preferred order (like Atlas screenshot)
+    local preferred = { "Home", "Farming", "Combat", "Quests", "Planters", "Toys", "Webhook", "Config", "Debug", "Theme" }
+    for i, name in ipairs(preferred) do
+        orderByName[tostring(name):lower()] = i
+    end
+    local fallbackBase = #preferred + 10
+
+    for i, t in ipairs(state.atlasTabs) do
+        local name = tostring(t.name or "")
+        tabNames[i] = name
+        local key = name:lower()
+        if not orderByName[key] then
+            orderByName[key] = fallbackBase + i
+        end
+        if t.icon then
+            iconByName[key] = tostring(t.icon)
+        end
+    end
+
+    local pageContainer = _atlas_findPageContainer(root) or root
+    local tabContainer = _atlas_findTabButtonContainer(root, tabNames)
+    if not tabContainer or not pageContainer then
+        return
+    end
+
+    -- Create sidebar wrapper
+    local outer = pageContainer.Parent or root
+    if not outer or typeof(outer) ~= "Instance" then
+        return
+    end
+
+    local sidebar = outer:FindFirstChild("AtlasSidebar")
+    if not sidebar then
+        sidebar = Instance.new("Frame")
+        sidebar.Name = "AtlasSidebar"
+        sidebar.BorderSizePixel = 0
+        sidebar.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+        sidebar.Parent = outer
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = sidebar
+    end
+
+    local sidebarW = 190
+    local pad = 8
+    local headerH = 42
+
+    -- Top bar (Atlas-style)
+    local topbar = outer:FindFirstChild("AtlasTopbar")
+    if not topbar then
+        topbar = Instance.new("Frame")
+        topbar.Name = "AtlasTopbar"
+        topbar.BorderSizePixel = 0
+        topbar.BackgroundColor3 = Color3.fromRGB(26, 98, 185)
+        topbar.Parent = outer
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = topbar
+
+        local title = Instance.new("TextLabel")
+        title.Name = "AtlasTitle"
+        title.BackgroundTransparency = 1
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.TextYAlignment = Enum.TextYAlignment.Center
+        title.Font = Enum.Font.GothamSemibold
+        title.TextSize = 16
+        title.TextColor3 = Color3.fromRGB(245, 245, 245)
+        title.Text = "Atlas v1.0"
+        title.Size = UDim2.new(1, -16, 1, 0)
+        title.Position = UDim2.new(0, 12, 0, 0)
+        title.Parent = topbar
+    end
+
+    topbar.Position = UDim2.new(0, pad, 0, pad)
+    topbar.Size = UDim2.new(1, -(pad * 2), 0, headerH)
+
+    -- Keep same vertical alignment as pages, but below topbar
+    local baseYScale, baseYOffset = pageContainer.Position.Y.Scale, pageContainer.Position.Y.Offset
+    local baseHScale, baseHOffset = pageContainer.Size.Y.Scale, pageContainer.Size.Y.Offset
+
+    sidebar.Position = UDim2.new(0, pad, baseYScale, baseYOffset + headerH + (pad * 2))
+    sidebar.Size = UDim2.new(0, sidebarW, baseHScale, baseHOffset - (headerH + (pad * 2)))
+
+
+    -- Move tabs into sidebar
+    pcall(function()
+        tabContainer.Parent = sidebar
+    end)
+
+    local search = sidebar:FindFirstChild("AtlasSearch")
+    if not search then
+        search = Instance.new("TextBox")
+        search.Name = "AtlasSearch"
+        search.ClearTextOnFocus = false
+        search.PlaceholderText = "Search"
+        search.Text = ""
+        search.TextSize = 14
+        search.Font = Enum.Font.Gotham
+        search.TextXAlignment = Enum.TextXAlignment.Left
+        search.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+        search.TextColor3 = Color3.fromRGB(230, 230, 230)
+        search.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+        search.BorderSizePixel = 0
+        search.Size = UDim2.new(1, -12, 0, 28)
+        search.Position = UDim2.new(0, 6, 0, 6)
+        search.Parent = sidebar
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = search
+    end
+
+    -- Position tab container under search
+    tabContainer.Position = UDim2.new(0, 0, 0, 40)
+    tabContainer.Size = UDim2.new(1, 0, 1, -40)
+    if tabContainer:IsA("ScrollingFrame") then
+        tabContainer.ScrollBarThickness = 4
+        tabContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
+        tabContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        tabContainer.BackgroundTransparency = 1
+        tabContainer.BorderSizePixel = 0
+    else
+        tabContainer.BackgroundTransparency = 1
+        tabContainer.BorderSizePixel = 0
+    end
+
+    -- Make tab buttons vertical
+    local list = tabContainer:FindFirstChildOfClass("UIListLayout")
+    if list then
+        list.FillDirection = Enum.FillDirection.Vertical
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Padding = UDim.new(0, 4)
+    end
+
+    -- Style tab buttons + set order + icons
+    for _, child in ipairs(tabContainer:GetChildren()) do
+        if child:IsA("TextButton") and type(child.Text) == "string" then
+            local key = child.Text:lower()
+            local order = orderByName[key]
+            if order then
+                child.LayoutOrder = order
+            end
+
+            local iconName = iconByName[key]
+            local iconAsset = _atlas_lucidePng(iconName, 18, "cfd3dc")
+            _atlas_styleTabButton(child, iconAsset)
+            _atlas_setTabActive(child, false)
+
+            if not child.__atlasActiveBound then
+                child.__atlasActiveBound = true
+                child.Activated:Connect(function()
+                    local s = window.__atlasState
+                    if not s then return end
+                    if s.currentActiveBtn and s.currentActiveBtn ~= child then
+                        _atlas_setTabActive(s.currentActiveBtn, false)
+                    end
+                    s.currentActiveBtn = child
+                    _atlas_setTabActive(child, true)
+                end)
+            end
+        end
+    end
+
+    
+    -- Ensure one tab is highlighted
+    if not state.currentActiveBtn then
+        local first
+        for _, child in ipairs(tabContainer:GetChildren()) do
+            if child:IsA("TextButton") and child.Visible ~= false then
+                first = child
+                break
+            end
+        end
+        if first then
+            state.currentActiveBtn = first
+            _atlas_setTabActive(first, true)
+        end
+    end
+
+-- Search filter
+    if not search.__atlasBound then
+        search.__atlasBound = true
+        search:GetPropertyChangedSignal("Text"):Connect(function()
+            local q = tostring(search.Text or ""):lower()
+            for _, child in ipairs(tabContainer:GetChildren()) do
+                if child:IsA("TextButton") and type(child.Text) == "string" then
+                    if q == "" then
+                        child.Visible = true
+                    else
+                        child.Visible = child.Text:lower():find(q, 1, true) ~= nil
+                    end
+                end
+            end
+        end)
+    end
+
+    -- Push pages to the right
+    pageContainer.Position = UDim2.new(0, sidebarW + (pad * 2), baseYScale, baseYOffset + headerH + (pad * 2))
+    pageContainer.Size = UDim2.new(1, -(sidebarW + (pad * 3)), baseHScale, baseHOffset - (headerH + (pad * 2)))
+end
+
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -441,6 +708,10 @@ local TOYS = {
     { key = "BlueBooster", label = "Blue Field Booster", aliases = { "bluefieldbooster", "blue field booster", "blue booster" } },
     { key = "RedBooster", label = "Red Field Booster", aliases = { "redfieldbooster", "red field booster", "red booster" } },
     { key = "MountainBooster", label = "Mountain Top Booster", aliases = { "mountaintopfieldbooster", "mountain top booster", "mountain booster" } },
+    -- Beesmas / seasonal
+    { key = "Samovar", label = "Samovar", aliases = { "samovar" } },
+    { key = "Stockings", label = "Stockings", aliases = { "stockings" } },
+    { key = "SnowMachine", label = "Snow Machine", aliases = { "snow machine", "snowmachine" } },
 }
 
 local TOY_NAMES = {}
@@ -766,7 +1037,7 @@ getgenv().ICHIGERSettings = Settings
 getgenv().IchigisssSettings = Settings
 
 local UITheme = {
-    SchemeColor = Color3.fromRGB(166, 73, 255),
+    SchemeColor = Color3.fromRGB(41, 74, 122),
     Background = Color3.fromRGB(8, 8, 8),
     Header = Color3.fromRGB(0, 0, 0),
     TextColor = Color3.fromRGB(235, 235, 235),
@@ -787,6 +1058,29 @@ local TOKEN_PATTERNS = {
     Bomb = { "bomb" },
     Bubble = { "bubble" },
     Flame = { "flame" },
+}
+
+local TOKEN_GUIDE_LIST = {
+    { icon = "[H]", name = "Honey Token" },
+    { icon = "[P]", name = "Pollen Token" },
+    { icon = "[+]", name = "Focus Token" },
+    { icon = "[>]", name = "Haste Token" },
+    { icon = "[M]", name = "Melody Token" },
+    { icon = "[A]", name = "Ability Token" },
+    { icon = "[!]", name = "Rage Token" },
+    { icon = "[!]", name = "Stinger Token" },
+    { icon = "[$]", name = "Ticket Token" },
+    { icon = "[T]", name = "Treat Token" },
+    { icon = "[X]", name = "Mark Token" },
+    { icon = "[X]", name = "Target Token" },
+    { icon = "[*]", name = "Pop Star Token" },
+    { icon = "[*]", name = "Guiding Star Token" },
+    { icon = "[*]", name = "Star Saw Token" },
+    { icon = "[L]", name = "Link Token" },
+    { icon = "[B]", name = "Bomb Token" },
+    { icon = "[U]", name = "Bubble Token" },
+    { icon = "[F]", name = "Flame Token" },
+    { icon = "[Q]", name = "Precise Token" },
 }
 
 local EFFECT_CLASSES = {
@@ -4173,19 +4467,43 @@ local function importConfigFromClipboard()
 end
 
 normalizeConfigValues()
-Settings.ConfigAutoSave = false
-Settings.ConfigAutoLoad = false
-local initialConfigMessage = "Config system disabled"
+if hasConfigFileApi() then
+    loadConfigMetaProfile()
+end
+
+local initialConfigLoaded = false
+local initialConfigMessage = "No config loaded"
+if hasConfigFileApi() then
+    if Settings.ConfigAutoLoad then
+        local allowAutoLoad = true
+        if tostring(Settings.AutoloadForUsername or "") ~= "" then
+            allowAutoLoad = normalizeText(Settings.AutoloadForUsername) == normalizeText(LocalPlayer.Name)
+        end
+        if allowAutoLoad then
+            initialConfigLoaded, initialConfigMessage = loadConfigFromFile(Settings.ConfigProfile)
+            if not initialConfigLoaded then
+                initialConfigMessage = initialConfigMessage or "No config loaded"
+            end
+        else
+            initialConfigMessage = "Autoload username mismatch"
+        end
+    else
+        initialConfigMessage = "Auto load disabled"
+    end
+else
+    Settings.ConfigAutoSave = false
+    initialConfigMessage = "Executor has no file API"
+end
 
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
     applyWalkSpeed()
 end)
 
-local Window = Library.CreateLib("ICHIGER v1.0", UITheme)
+local Window = Library.CreateLib("Atlas v1.0", UITheme)
 
 do
-local MainTab = Window:NewTab("Home")
+local MainTab = Window:NewTab("Home", "home")
 local MainControl = MainTab:NewSection("Home")
 local MainTravel = MainTab:NewSection("Navigation")
 local MainUI = MainTab:NewSection("UI")
@@ -4272,7 +4590,7 @@ end)
 end
 
 do
-local FarmTab = Window:NewTab("Farming")
+local FarmTab = Window:NewTab("Farming", "leaf")
 local FarmSection = FarmTab:NewSection("Field + Hive")
 
 FarmSection:NewLabel("Farming is locked to selected field only")
@@ -4443,8 +4761,111 @@ end)
 end
 
 do
-local ToysTab = Window:NewTab("Toys")
+local ToysTab = Window:NewTab("Toys", "gift")
 local ToyControl = ToysTab:NewSection("Toys")
+
+local ToyTimers = ToysTab:NewSection("Timers")
+
+local function _atlas_fmtRemain(sec)
+    sec = tonumber(sec) or 0
+    if sec <= 0 then
+        return "Ready"
+    end
+    sec = math.floor(sec)
+    local h = math.floor(sec / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    local s = sec % 60
+    if h > 0 then
+        return string.format("%dh %dm %ds", h, m, s)
+    elseif m > 0 then
+        return string.format("%dm %ds", m, s)
+    end
+    return string.format("%ds", s)
+end
+
+local timerLabels = {}
+local function _atlas_addTimer(name)
+    timerLabels[name] = ToyTimers:NewLabel(name .. ": ...")
+end
+
+-- Category timers (same keys as toggles)
+local CAT_ORDER = {
+    { key = "AutoToyBoosters", name = "Boosters" },
+    { key = "AutoToyDispensers", name = "Dispensers" },
+    { key = "AutoToyMemoryMatch", name = "Memory Match" },
+    { key = "AutoToyWindShrine", name = "Wind Shrine" },
+    { key = "AutoToyMaterials", name = "Materials" },
+    { key = "AutoToyStickers", name = "Stickers" },
+    { key = "AutoToyProgression", name = "Progression" },
+    { key = "AutoToyBeesmas", name = "Beesmas" },
+    { key = "AutoToyGummyBeacon", name = "Gummy Beacon" },
+    { key = "AutoToyMisc", name = "Misc" },
+    { key = "AutoToyDapperBearShop", name = "Dapper Shop" },
+    { key = "AutoToyNectarCondenser", name = "Nectar Condenser" },
+    { key = "AutoHiveTasks", name = "Hive" },
+}
+
+for _, item in ipairs(CAT_ORDER) do
+    _atlas_addTimer(item.name)
+end
+
+-- Beesmas toy quick view (if present in your TOYS list)
+local function _atlas_findToyKeyByLabel(label)
+    local want = tostring(label):lower()
+    for _, t in ipairs(TOYS) do
+        if tostring(t.label):lower() == want then
+            return t.key
+        end
+    end
+    return nil
+end
+
+local BEESMAS_TOYS = {
+    { label = "Samovar", key = _atlas_findToyKeyByLabel("Samovar") },
+    { label = "Stockings", key = _atlas_findToyKeyByLabel("Stockings") },
+    { label = "Snow Machine", key = _atlas_findToyKeyByLabel("Snow Machine") },
+}
+
+for _, bt in ipairs(BEESMAS_TOYS) do
+    if bt.key then
+        _atlas_addTimer(bt.label)
+    end
+end
+
+task.spawn(function()
+    while true do
+        local now = os.clock()
+        local loopDelay = math.max(20, tonumber(Settings.ToyLoopDelay) or 120)
+
+        for _, item in ipairs(CAT_ORDER) do
+            local label = timerLabels[item.name]
+            if label and label.UpdateLabel then
+                if not Settings[item.key] then
+                    label:UpdateLabel(item.name .. ": Off")
+                else
+                    local last = atlasToyTracker[item.key] or 0
+                    local remain = loopDelay - (now - last)
+                    label:UpdateLabel(item.name .. ": " .. _atlas_fmtRemain(remain))
+                end
+            end
+        end
+
+        for _, bt in ipairs(BEESMAS_TOYS) do
+            if bt.key then
+                local labelObj = timerLabels[bt.label]
+                if labelObj and labelObj.UpdateLabel then
+                    local last = toyUseTracker[bt.key] or 0
+                    local remain = loopDelay - (now - last)
+                    labelObj:UpdateLabel(bt.label .. ": " .. _atlas_fmtRemain(remain))
+                end
+            end
+        end
+
+        task.wait(1)
+    end
+end)
+
+
 local ToyAtlas = ToysTab:NewSection("Auto Categories")
 local ToyMaterials = ToysTab:NewSection("Materials + Inventory")
 local ToyList = ToysTab:NewSection("Manual Toy List")
@@ -4611,7 +5032,125 @@ end
 end
 
 do
-local QuestsTab = Window:NewTab("Quests")
+local CombatTab = Window:NewTab("Combat", "swords")
+local CombatMain = CombatTab:NewSection("Combat Core")
+local CombatMobs = CombatTab:NewSection("Monsters")
+local CombatBosses = CombatTab:NewSection("Bosses")
+
+local combatStatusLabel = CombatMain:NewLabel("Combat: idle")
+setCombatStatus = function(text)
+    if combatStatusLabel and combatStatusLabel.UpdateLabel then
+        combatStatusLabel:UpdateLabel(text)
+    end
+end
+
+CombatMain:NewToggle("Enable Combat", "Auto combat loop", function(state)
+    Settings.EnableCombat = state
+    if state then
+        task.spawn(function()
+            runCombatLoop(setCombatStatus)
+        end)
+    else
+        setCombatStatus("Combat: stopped")
+    end
+end)
+
+CombatMain:NewSlider("Combat Radius", "Target search distance", 600, 40, function(value)
+    Settings.CombatRadius = value
+end)
+
+CombatMain:NewToggle("Auto Demon Mask", "Try equip demon mask in combat", function(state)
+    Settings.AutoDemonMask = state
+end)
+
+CombatMain:NewToggle("Auto Stingers", "Try use stingers in combat", function(state)
+    Settings.AutoStingers = state
+end)
+
+CombatMain:NewToggle("Auto Star Saw", "Try use star saw in combat", function(state)
+    Settings.AutoStarSaw = state
+end)
+
+CombatMain:NewToggle("Auto Avoid Mobs", "Avoid random mobs when traveling", function(state)
+    Settings.AutoAvoidMobs = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Aphid", "Fight aphids", function(state)
+    Settings.AutoKillAphid = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Ladybug", "Fight ladybugs", function(state)
+    Settings.AutoKillLadybug = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Rhino Beetle", "Fight rhino beetles", function(state)
+    Settings.AutoKillRhinoBeetle = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Spider", "Fight spider", function(state)
+    Settings.AutoKillSpider = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Mantis", "Fight mantis", function(state)
+    Settings.AutoKillMantis = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Scorpion", "Fight scorpion", function(state)
+    Settings.AutoKillScorpion = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Werewolf", "Fight werewolf", function(state)
+    Settings.AutoKillWerewolf = state
+end)
+
+CombatMobs:NewToggle("Auto Kill Vicious Bee", "Fight Vicious Bee", function(state)
+    Settings.AutoKillViciousBee = state
+end)
+
+CombatMobs:NewSlider("Vicious Min Level", "Minimum Vicious level", 20, 1, function(value)
+    Settings.ViciousMinLevel = value
+end)
+
+CombatMobs:NewSlider("Vicious Max Level", "Maximum Vicious level", 20, 1, function(value)
+    Settings.ViciousMaxLevel = value
+end)
+
+CombatBosses:NewToggle("Auto Kill Tunnel Bear", "Fight Tunnel Bear", function(state)
+    Settings.AutoKillTunnelBear = state
+end)
+
+CombatBosses:NewToggle("Auto Kill King Beetle", "Fight King Beetle", function(state)
+    Settings.AutoKillKingBeetle = state
+end)
+
+CombatBosses:NewToggle("Auto Kill Coconut Crab", "Fight Coconut Crab", function(state)
+    Settings.AutoKillCoconutCrab = state
+end)
+
+CombatBosses:NewToggle("Auto Kill Mondo Chick", "Fight Mondo Chick", function(state)
+    Settings.AutoKillMondoChick = state
+end)
+
+CombatBosses:NewToggle("Auto Kill Commando Chick", "Fight Commando Chick", function(state)
+    Settings.AutoKillCommando = state
+end)
+
+CombatBosses:NewToggle("Auto Kill Windy Bee", "Fight Windy Bee", function(state)
+    Settings.AutoKillWindyBee = state
+end)
+
+CombatBosses:NewSlider("Windy Min Level", "Minimum Windy level", 20, 1, function(value)
+    Settings.WindyMinLevel = value
+end)
+
+CombatBosses:NewSlider("Windy Max Level", "Maximum Windy level", 20, 1, function(value)
+    Settings.WindyMaxLevel = value
+end)
+
+end
+
+do
+local QuestsTab = Window:NewTab("Quests", "scroll")
 local QuestMain = QuestsTab:NewSection("Quest Core")
 local QuestMainToggles = QuestsTab:NewSection("Main Quest Toggles")
 local QuestRepeatToggles = QuestsTab:NewSection("Repeatable Toggles")
@@ -4755,7 +5294,7 @@ end)
 end
 
 do
-local PlantersTab = Window:NewTab("Planters")
+local PlantersTab = Window:NewTab("Planters", "sprout")
 local PlanterMain = PlantersTab:NewSection("Planter Settings")
 
 local planterStatusLabel = PlanterMain:NewLabel("Planters: idle")
@@ -4833,7 +5372,7 @@ end)
 end
 
 do
-local WebhookTab = Window:NewTab("Webhook")
+local WebhookTab = Window:NewTab("Webhook", "link")
 local WebhookMain = WebhookTab:NewSection("Webhook")
 local WebhookSettings = WebhookTab:NewSection("Webhook Settings")
 local GraphSettings = WebhookTab:NewSection("Graph Settings")
@@ -4927,66 +5466,213 @@ end)
 end
 
 do
-local ThemeTab = Window:NewTab("Theme")
-local ThemeSection = ThemeTab:NewSection("Customize Colors")
+local ConfigTab = Window:NewTab("Config", "settings")
+local SpeedSection = ConfigTab:NewSection("Config")
+local MoveSection = ConfigTab:NewSection("Movement")
+local StorageSection = ConfigTab:NewSection("Settings")
 
-ThemeSection:NewLabel("Tabs and background are black in default preset")
+SpeedSection:NewToggle("Use Remotes", "Prefer remote-based actions", function(state)
+    Settings.UseRemotes = state
+end)
 
-ThemeSection:NewColorPicker("SchemeColor", "Purple accent", UITheme.SchemeColor, function(color)
-    UITheme.SchemeColor = color
-    if Library.ChangeColor then
-        Library:ChangeColor("SchemeColor", color)
+SpeedSection:NewDropdown("Movement", "Tween / WalkTo / Hybrid", MOVEMENT_METHODS, function(value)
+    Settings.MovementMethod = value
+end)
+
+SpeedSection:NewDropdown("Sprinkler", "Preferred sprinkler type", SPRINKLER_TYPES, function(value)
+    Settings.SprinklerType = value
+end)
+
+SpeedSection:NewDropdown("Auto Dig Method", "Remote / ActivateTool / Both", DIG_METHODS, function(value)
+    Settings.AutoDigMethod = value
+end)
+
+SpeedSection:NewButton("Copy Discord", "Copy your webhook url quickly", function()
+    if type(setclipboard) == "function" then
+        pcall(function()
+            setclipboard(tostring(Settings.WebhookUrl or ""))
+        end)
     end
 end)
 
-ThemeSection:NewColorPicker("Background", "Background color", UITheme.Background, function(color)
-    UITheme.Background = color
-    if Library.ChangeColor then
-        Library:ChangeColor("Background", color)
+MoveSection:NewToggle("Enable Walk Speed", "Apply custom walk speed", function(state)
+    Settings.EnableWalkSpeed = state
+    applyWalkSpeed()
+end)
+
+MoveSection:NewToggle("Dynamic Walk Speed", "Adjust speed by bag state", function(state)
+    Settings.DynamicWalkSpeed = state
+end)
+
+MoveSection:NewSlider("WalkSpeed", "Player walk speed (40-120)", 120, 40, function(value)
+    Settings.PlayerSpeed = value
+    applyWalkSpeed()
+end)
+
+MoveSection:NewSlider("TweenSpeed", "Tween speed (40-120)", 120, 40, function(value)
+    Settings.TweenSpeed = value
+end)
+
+MoveSection:NewSlider("TweenSoftness", "Softer tween feel (0-100)", 100, 0, function(value)
+    Settings.TweenSoftness = value
+end)
+
+MoveSection:NewToggle("No Safe Mode", "Aggressive convert/tap spam", function(state)
+    Settings.NoSafeMode = state
+end)
+
+local configStatusLabel = StorageSection:NewLabel("Config: " .. tostring(initialConfigMessage))
+setConfigStatus = function(text)
+    if configStatusLabel and configStatusLabel.UpdateLabel then
+        configStatusLabel:UpdateLabel("Config: " .. text)
+    end
+end
+
+local activeProfileLabel = StorageSection:NewLabel("Profile: " .. tostring(Settings.ConfigProfile))
+local configPathLabel = StorageSection:NewLabel("File: " .. tostring(select(1, getConfigFilePath(Settings.ConfigProfile))))
+local function refreshConfigProfileLabels()
+    local path, normalizedProfile = getConfigFilePath(Settings.ConfigProfile)
+    Settings.ConfigProfile = normalizedProfile
+
+    if activeProfileLabel and activeProfileLabel.UpdateLabel then
+        activeProfileLabel:UpdateLabel("Profile: " .. normalizedProfile)
+    end
+    if configPathLabel and configPathLabel.UpdateLabel then
+        configPathLabel:UpdateLabel("File: " .. path)
+    end
+end
+
+StorageSection:NewDropdown("Selected Config", "Quick preset profile names", CONFIG_PROFILE_PRESETS, function(value)
+    Settings.ConfigProfile = normalizeProfileName(value)
+    refreshConfigProfileLabels()
+    setConfigStatus("selected profile")
+end)
+
+StorageSection:NewTextBox("Profile Name", "Use letters/numbers/_/-", function(value)
+    Settings.ConfigProfile = normalizeProfileName(value)
+    pcall(function()
+        saveConfigMetaProfile(Settings.ConfigProfile)
+    end)
+    refreshConfigProfileLabels()
+    setConfigStatus("profile set")
+end)
+
+StorageSection:NewTextBox("Autoload For Username", "Optional username tag", function(value)
+    Settings.AutoloadForUsername = tostring(value or "")
+    setConfigStatus("autoload username set")
+end)
+
+StorageSection:NewToggle("Auto Save", "Save config automatically", function(state)
+    Settings.ConfigAutoSave = state
+end)
+
+StorageSection:NewToggle("Auto Load", "Load selected profile on inject", function(state)
+    Settings.ConfigAutoLoad = state
+end)
+
+StorageSection:NewToggle("Backup On Save", "Write .bak before save", function(state)
+    Settings.ConfigSaveBackup = state
+end)
+
+StorageSection:NewToggle("Save Only Changes", "Skip file write if unchanged", function(state)
+    Settings.ConfigOnlyIfChanged = state
+end)
+
+StorageSection:NewSlider("Auto Save Delay", "Seconds between auto saves", 120, 5, function(value)
+    Settings.ConfigAutoSaveDelay = value
+end)
+
+StorageSection:NewButton("Create Config", "Create/save file for current profile", function()
+    local ok, msg = saveConfigToFile(Settings.ConfigProfile, true)
+    if ok then
+        refreshConfigProfileLabels()
+        setConfigStatus("created " .. tostring(Settings.ConfigProfile))
+    else
+        setConfigStatus(msg)
     end
 end)
 
-ThemeSection:NewColorPicker("Header", "Tab/header color", UITheme.Header, function(color)
-    UITheme.Header = color
-    if Library.ChangeColor then
-        Library:ChangeColor("Header", color)
+StorageSection:NewButton("Save Config", "Save your profile to JSON", function()
+    local ok, msg = saveConfigToFile(Settings.ConfigProfile, true)
+    if ok then
+        refreshConfigProfileLabels()
+        setConfigStatus(msg)
+    else
+        setConfigStatus(msg)
     end
 end)
 
-ThemeSection:NewColorPicker("ElementColor", "Section/button color", UITheme.ElementColor, function(color)
-    UITheme.ElementColor = color
-    if Library.ChangeColor then
-        Library:ChangeColor("ElementColor", color)
-    end
-end)
-
-ThemeSection:NewColorPicker("TextColor", "Text color", UITheme.TextColor, function(color)
-    UITheme.TextColor = color
-    if Library.ChangeColor then
-        Library:ChangeColor("TextColor", color)
-    end
-end)
-
-ThemeSection:NewButton("Preset: Purple Black", "Apply purple + black style", function()
-    local preset = {
-        SchemeColor = Color3.fromRGB(166, 73, 255),
-        Background = Color3.fromRGB(8, 8, 8),
-        Header = Color3.fromRGB(0, 0, 0),
-        TextColor = Color3.fromRGB(235, 235, 235),
-        ElementColor = Color3.fromRGB(0, 0, 0),
-    }
-    for key, color in pairs(preset) do
-        UITheme[key] = color
+StorageSection:NewButton("Load Config", "Load your profile from JSON", function()
+    local ok, msg = loadConfigFromFile(Settings.ConfigProfile)
+    if ok then
+        applyWalkSpeed()
         if Library.ChangeColor then
-            Library:ChangeColor(key, color)
+            for themeKey, color in pairs(UITheme) do
+                Library:ChangeColor(themeKey, color)
+            end
         end
+        refreshConfigProfileLabels()
+        setConfigStatus(msg)
+    else
+        setConfigStatus(msg)
+    end
+end)
+
+StorageSection:NewButton("Load Backup", "Load .bak for current profile", function()
+    local ok, msg = loadBackupConfigFromFile(Settings.ConfigProfile)
+    if ok then
+        refreshConfigProfileLabels()
+        applyWalkSpeed()
+        if Library.ChangeColor then
+            for themeKey, color in pairs(UITheme) do
+                Library:ChangeColor(themeKey, color)
+            end
+        end
+        setConfigStatus(msg)
+    else
+        setConfigStatus(msg)
+    end
+end)
+
+StorageSection:NewButton("Delete Config", "Delete current profile + backup", function()
+    local ok, msg = deleteConfigFile(Settings.ConfigProfile)
+    if ok then
+        setConfigStatus(msg)
+    else
+        setConfigStatus(msg)
+    end
+end)
+
+StorageSection:NewButton("Export JSON", "Copy active profile JSON to clipboard", function()
+    local ok, msg = exportConfigToClipboard()
+    if ok then
+        setConfigStatus(msg)
+    else
+        setConfigStatus(msg)
+    end
+end)
+
+StorageSection:NewButton("Import JSON", "Load JSON from clipboard", function()
+    local ok, msg = importConfigFromClipboard()
+    if ok then
+        refreshConfigProfileLabels()
+        applyWalkSpeed()
+        if Library.ChangeColor then
+            for themeKey, color in pairs(UITheme) do
+                Library:ChangeColor(themeKey, color)
+            end
+        end
+        setConfigStatus(msg)
+    else
+        setConfigStatus(msg)
     end
 end)
 
 end
 
+
 local okDebugUi, debugUiErr = pcall(function()
-    local DebugTab = Window:NewTab("Debug + AntiLag")
+    local DebugTab = Window:NewTab("Debug", "bug")
     local DebugMain = DebugTab:NewSection("Debug")
     local DebugDetected = DebugTab:NewSection("Detected Features")
     local DebugPerfCore = DebugTab:NewSection("Anti Lag Core")
@@ -5153,6 +5839,72 @@ if not okDebugUi then
     warn("[ICHIGER] Debug UI failed: " .. tostring(debugUiErr))
 end
 
+
+do
+local ThemeTab = Window:NewTab("Theme", "palette")
+local ThemeSection = ThemeTab:NewSection("Customize Colors")
+
+ThemeSection:NewLabel("Tabs and background are black in default preset")
+
+ThemeSection:NewColorPicker("SchemeColor", "Accent color", UITheme.SchemeColor, function(color)
+    UITheme.SchemeColor = color
+    if Library.ChangeColor then
+        Library:ChangeColor("SchemeColor", color)
+    end
+end)
+
+ThemeSection:NewColorPicker("Background", "Background color", UITheme.Background, function(color)
+    UITheme.Background = color
+    if Library.ChangeColor then
+        Library:ChangeColor("Background", color)
+    end
+end)
+
+ThemeSection:NewColorPicker("Header", "Tab/header color", UITheme.Header, function(color)
+    UITheme.Header = color
+    if Library.ChangeColor then
+        Library:ChangeColor("Header", color)
+    end
+end)
+
+ThemeSection:NewColorPicker("ElementColor", "Section/button color", UITheme.ElementColor, function(color)
+    UITheme.ElementColor = color
+    if Library.ChangeColor then
+        Library:ChangeColor("ElementColor", color)
+    end
+end)
+
+ThemeSection:NewColorPicker("TextColor", "Text color", UITheme.TextColor, function(color)
+    UITheme.TextColor = color
+    if Library.ChangeColor then
+        Library:ChangeColor("TextColor", color)
+    end
+end)
+
+ThemeSection:NewButton("Preset: Purple Black", "Apply purple + black style", function()
+    local preset = {
+        SchemeColor = Color3.fromRGB(166, 73, 255),
+        Background = Color3.fromRGB(8, 8, 8),
+        Header = Color3.fromRGB(0, 0, 0),
+        TextColor = Color3.fromRGB(235, 235, 235),
+        ElementColor = Color3.fromRGB(0, 0, 0),
+    }
+    for key, color in pairs(preset) do
+        UITheme[key] = color
+        if Library.ChangeColor then
+            Library:ChangeColor(key, color)
+        end
+    end
+end)
+
+end
+
+
+-- Apply Atlas-style sidebar (icons + search)
+task.defer(function()
+    pcall(applyAtlasLayout, Window)
+end)
+
 task.spawn(function()
     runSupportLoop()
 end)
@@ -5165,6 +5917,9 @@ task.spawn(function()
     if Settings.AutoUseToys then
         runToyLoop(setToyStatus)
     end
+    if Settings.EnableCombat then
+        runCombatLoop(setCombatStatus)
+    end
     if Settings.AutoQuest then
         runQuestLoop(setQuestStatus)
     end
@@ -5176,5 +5931,22 @@ task.spawn(function()
     end
     if Settings.AntiLagEnabled then
         runAntiLagLoop(setDebugStatus)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        local waitSeconds = math.clamp(tonumber(Settings.ConfigAutoSaveDelay) or 10, 5, 120)
+        task.wait(waitSeconds)
+        if Settings.ConfigAutoSave then
+            local ok, msg = saveConfigToFile(Settings.ConfigProfile, false)
+            if ok then
+                if msg ~= "No changes" then
+                    setConfigStatus("autosaved " .. tostring(Settings.ConfigProfile))
+                end
+            else
+                setConfigStatus(msg)
+            end
+        end
     end
 end)
