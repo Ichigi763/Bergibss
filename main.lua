@@ -2,32 +2,61 @@
 -- Hand-tuned build for Berg
 local LIBRARY_URL = "https://raw.githubusercontent.com/bloodball/UI-Librarys/main/Elerium"
 
-local function loadUiLibrary()
-    local okFetch, source = pcall(function()
-        return game:HttpGet(LIBRARY_URL)
-    end)
-    if not okFetch or type(source) ~= "string" or source == "" then
-        return nil, "HttpGet failed"
+local function httpGet(url)
+    -- Supports multiple executors
+    local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    if type(req) == "function" then
+        local ok, res = pcall(req, { Url = url, Method = "GET" })
+        if ok and type(res) == "table" then
+            return res.Body or res.body or nil
+        end
     end
 
+    if game and type(game.HttpGet) == "function" then
+        local ok, body = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if ok then return body end
+    end
+
+    return nil
+end
+
+local function loadUiLibrary()
+    local source = httpGet(LIBRARY_URL)
+    if type(source) ~= "string" or source == "" then
+        return nil, "HTTP fetch failed"
+    end
+
+    -- Some copies of Elerium include a demo ("Example UI") we don't want to execute.
     local exampleMarker = string.find(source, "do -- Example UI", 1, true)
     if exampleMarker then
         source = string.sub(source, 1, exampleMarker - 1)
     end
 
-    source = source .. "\nreturn library\n"
-
+    -- Do NOT blindly append "return library": the upstream file often already returns.
     local chunk, loadErr = loadstring(source)
     if type(chunk) ~= "function" then
         return nil, loadErr or "loadstring failed"
     end
 
-    local okRun, library = pcall(chunk)
-    if not okRun or type(library) ~= "table" then
-        return nil, "library runtime failed"
+    local okRun, libOrNil = pcall(chunk)
+    if okRun and type(libOrNil) == "table" then
+        return libOrNil
     end
 
-    return library
+    -- Fallback: library might have been created as a global/upvalue without returning.
+    local g = getgenv and getgenv() or _G
+    if type(g) == "table" then
+        if type(rawget(g, "library")) == "table" then
+            return rawget(g, "library")
+        end
+        if type(rawget(g, "Library")) == "table" then
+            return rawget(g, "Library")
+        end
+    end
+
+    return nil, "UI library did not return a table"
 end
 
 local Library, libraryError = loadUiLibrary()
