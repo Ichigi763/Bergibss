@@ -330,9 +330,8 @@ local function _atlas_isfile(path)
 end
 
 local function _atlas_lucidePng(iconName, sizePx, hexColor)
-    if not iconName or iconName == "" then
-        return nil
-    end
+    return nil
+end
     if not _atlas_hasFileApi() then
         return nil
     end
@@ -409,7 +408,7 @@ local function _atlas_styleTabButton(btn, iconAsset)
     btn.TextXAlignment = Enum.TextXAlignment.Left
     btn.AutoButtonColor = true
     btn.Font = Enum.Font.Gotham
-    \1    btn.TextColor3 = Color3.fromRGB(210, 210, 210)
+    btn.TextColor3 = Color3.fromRGB(210, 210, 210)
     btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
     btn.BackgroundTransparency = 0
     btn.BorderSizePixel = 0
@@ -421,25 +420,9 @@ local function _atlas_styleTabButton(btn, iconAsset)
         padding = Instance.new("UIPadding")
         padding.Name = "AtlasPadding"
         padding.Parent = btn
-        padding.PaddingLeft = UDim.new(0, 34)
+        padding.PaddingLeft = UDim.new(0, 12)
         padding.PaddingRight = UDim.new(0, 6)
     end
-
-    local icon = btn:FindFirstChild("AtlasIcon")
-    if not icon then
-        icon = Instance.new("ImageLabel")
-        icon.Name = "AtlasIcon"
-        icon.BackgroundTransparency = 1
-        icon.Size = UDim2.new(0, 18, 0, 18)
-        icon.Position = UDim2.new(0, 10, 0.5, -9)
-        icon.Parent = btn
-    end
-    if iconAsset then
-        icon.Image = iconAsset
-        icon.ImageTransparency = 0
-    else
-        icon.Image = ""
-        icon.ImageTransparency = 1
     end
 
 local function _atlas_setTabActive(btn, isActive)
